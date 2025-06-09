@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dup-And-Sahre</title>
+    <link rel="icon" href="//ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png">
+    <style>
+      body { color: #222; font: 13px/18px arial, sans-serif; }
+      body > * { max-width: 700px; width: 100%; margin: 0 auto; }
+      body > p { margin-bottom: 10px; }
+      h1 { text-align: center; margin-bottom: 10px; font-size: 1.5em; }
+      table { border-spacing: 0; margin: 10px 0 20px; }
+      td { border-bottom: 1px solid #ebebeb; padding: 11px 0; }
+      td:first-child { text-align: right; width: auto; padding-right: 3px; }
+      td:last-child { width: 100%; vertical-align: middle; }
+      tr:last-child td:first-child { vertical-align: top; }
+      *[onclick] { cursor: pointer; }
+      .error { background-color: red; color: black; }
+      p.error { color: red; background-color: inherit; }
+      p.warn { color: orange; background-color: inherit; }
+      #ok[disabled] { cursor: wait; }
+      #groups { border: 2px dashed transparent; border-radius: 5px; padding-top: 9px; padding-bottom: 9px; }
+      #groups.drag-over { border-color: blue; }
+      textarea { resize: vertical; width: 98% }
+      #output { margin: 5px auto; padding: 5px; }
+    </style>
+    <script>
+      const API_KEY = "AIzaSyBi8ZJYwhgQdA-9W54dpifw6eMhyD1-rRo";
+      const CLIENT_ID = "684562415835-2fd94i9sooo40nk2tpesi8vnatq4ui9r.apps.googleusercontent.com";
+      const CLOUD_PROJECT_NUMBER = "quickstart-1572222806139";
+      const DISCOVERY_DOCS = [
+        "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+        "https://sheets.googleapis.com/$discovery/rest?version=v4",
+      ];
+      const SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets.readonly"];
+      let OAUTH_TOKEN = null;
+
+      let pickerApiLoaded = false;
+      let driveApiLoaded = false;
+      let sheetsApiLoaded = false;
+      let client = null;
+      let postLoginAction = null;
+
+      function onApiLoad() {
+        gapi.load("picker", {callback: () => { pickerApiLoaded = true; }});
+        gapi.load('client:auth2', function() {
+            gapi.client.load('drive', 'v3').then(() => { driveApiLoaded = true; });
+            gapi.client.load('sheets', 'v4').then(() => { sheetsApiLoaded = true; });
+        });
+    }
+
+      function onGISClientLoad() {
+        client = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES.join(" "),
+          prompt: '',
+          callback: async (response) => {
+            if (response.error !== undefined) { showError(response); }
+            else {
+              OAUTH_TOKEN = response.access_token;
+              if (postLoginAction) {
+                let action = postLoginAction;
+                postLoginAction = null;
+                action();
+              }
+            }
+          },
+          error_callback: (error) => {
+            showError("Login failed: " + error);
+          }
+        });
+        client.requestAccessToken();
+      }
+
+      function clearOutput() { output.innerText = ''; }
+      function showError(msg) {
+        if (msg.result) { msg = msg.result.error.message; }
+        output.innerHTML += `<p class=error>${msg}</p>`;
+      }
+      function showWarn(msg) { output.innerHTML += `<p class=warn>${msg}</p>`; }
+      function showOutput(msg) { output.innerHTML += `<p>${msg}</p>`; }
+
+      function escapeHTML(text) {
+        return text.toString().replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+      }
+      function escapeStr(filename) { return filename.replaceAll('\\', '\\\\').replaceAll("'", "\\'") }
+
+      /** Set a cell to show a file link to a Google Doc */
+      function setDocFileLink(elem, file) {
+        elem.innerHTML = `<img src="${file.iconUrl}"> ${escapeHTML(file.name)} <a href="${file.url}" target="_blank" onclick="event.stopPropagation();">(open)</a>`;
+        elem.value = file;
+        elem.classList.remove("error");
+      }
+
+      /* On loading, get references to most cells and set the initial Google Doc source */
+      let fileElem, groupsElem, destElem, nameElem, notifyElem, emailElem, outputElem;
+      window.addEventListener('load', () => {
+        fileElem = document.getElementById('file');
+        groupsElem = document.getElementById('groups');
+        destElem = document.getElementById('dest');
+        nameElem = document.getElementById('name');
+        notifyElem = document.getElementById('notify');
+        emailElem = document.getElementById('email');
+        output = document.getElementById('output');
+      });
+
+      /** Set a cell to show a doc that isn't a Google Doc */
+      function setDocFileDragged(elem, file_name) {
+        elem.innerHTML = `${escapeHTML(file_name)}`;
+        elem.value = file_name;
+      }
+      
+      /** Show a file picker with the given view and calling the callback with a File when chosen */
+      function openPicker(callback, view) {
+        clearOutput();
+        if (!pickerApiLoaded) { showError("Unable to load the file picker API."); return; }
+        if (client === null || OAUTH_TOKEN === null) {
+            showError("You must be logged in to use the file picker.");
+            client.requestAccessToken();
+            postLoginAction = () => { openPicker(callback, view); };
+            return;
+        }
+        const picker = new google.picker.PickerBuilder()
+          .addView(view)
+          .hideTitleBar()
+          .setSize(650, 600)
+          .setOAuthToken(OAUTH_TOKEN)
+          .setDeveloperKey(API_KEY)
+          .setAppId(CLOUD_PROJECT_NUMBER)
+          .setCallback((data) => {
+            if (data[google.picker.Response.ACTION] === google.picker.Action.PICKED) {
+              callback(data.docs[0]);
+            }
+          })
+          .build();
+        picker.setVisible(true);
+      }
+
+      /** Select the 'groups' file from Google Drive, either a Google Sheet or CSV file */
+      function selectGroups() {
+        openPicker(setGroups, new google.picker.DocsView()
+          .setMimeTypes('application/vnd.google-apps.spreadsheet,text/csv')
+          .setIncludeFolders(true)
+          .setMode(google.picker.DocsViewMode.LIST)
+          // TODO: set parent directory if the parent is not the root?
+          // .setParent(destElem.value.id)
+        );
+      }
+
+      /** Set the 'groups' file from a selected Google Drive file (either Google Sheet or CSV) */
+      function setGroups(doc) {
+        setDocFileLink(groupsElem, doc);
+        if (doc.mimeType === 'application/vnd.google-apps.spreadsheet') {
+          // get the tabs/sheets in the Google Sheet (async)
+          gapi.client.sheets.spreadsheets.get({spreadsheetId: doc.id, fields: "sheets(properties(sheetId,title))"})
+            .then((resp) => { setGroupTabNames(doc.id, resp.result.sheets) }, showGroupError);
+        } else if (doc.mimeType === 'text/csv') {
+          // get the contents of the CSV file (async)
+          gapi.client.drive.files.get({fileId: doc.id, supportsAllDrives: true, alt: 'media'})
+            .then((resp) => { setGroupDataFromCsv(resp.body); }, showGroupError);
+        } else { showGroupError("Unknown file type"); }
+      }
+
+      /** Show an error while processing the 'groups' file */
+      function showGroupError(error) {
+        if (error.result) { error = error.result.error.message; }
+        groupsElem.innerHTML = `Error: ${escapeHTML(error)}`;
+        groupsElem.classList.add("error");
+      }
+
+      /** Set the available tab names for a Google Sheet and load the info for the first tab */
+      function setGroupTabNames(id, sheets) {
+        const titles = sheets.map((sheet) => sheet.properties.title);
+        const opts = titles.map((title) => escapeHTML(title)).map((title) => `<option value="${title}">${title}</option>`).join("");
+        groupsElem.innerHTML += ` - Sheet: <select oninput="setGroupTab(this.value)" onclick="event.stopPropagation();">${opts}</select>`;
+        setGroupDataFromSheet(id, titles[0]);
+      }
+
+      /** Set the current Google Sheet 'groups' tab name */
+      function setGroupTab(sheet) { setGroupDataFromSheet(groupsElem.file.id, sheet); }
+
+      /** Set the current 'groups' from the Google Sheet id and tab name */
+      function setGroupDataFromSheet(id, sheet) {
+        gapi.client.sheets.spreadsheets.values.get({spreadsheetId: id, range: sheet})
+          .then((resp) => { setGroupData(resp.result.values); }, showGroupError);
+      }
+
+      /* Basic drag event handling */
+      function dragEnter(ev) { ev.preventDefault(); event.target.classList.add("drag-over"); }
+      function dragLeave(ev) { ev.preventDefault(); event.target.classList.remove("drag-over"); }
+      function dragOver(ev) { ev.preventDefault(); }
+
+      /** Set the 'groups' from a dropped CSV file in the drop event. */
+      function setGroupDataFromDrop(ev) {
+        groupsElem.classList.remove("drag-over");
+        ev.preventDefault();
+        if (ev.dataTransfer.items) {
+          const item = ev.dataTransfer.items[0]
+          if (item.kind === "file") {
+            setGroupDataFromCsvFile(item.getAsFile());
+          } else if (item.kind === "string") {
+            setDocFileDragged(groupsElem, "<string>");
+            item.getAsString((data) => { setGroupDataFromCsv(data); })
+          }
+        } else {
+          setGroupDataFromCsvFile(ev.dataTransfer.files[0]);
+        }
+      }
+
+      /** Set the 'groups' from a dropped CSV file. */
+      function setGroupDataFromCsvFile(file) {
+        setDocFileDragged(groupsElem, file.name);
+        if (file.type && file.type !== 'text/csv') { showGroupError("Unknown file type"); return; }
+        const reader = new FileReader();
+        reader.onload = () => { setGroupDataFromCsv(reader.result); };
+        reader.readAsText(file);
+      }
+
+      /** Set the 'groups' from a CSV string. */
+      function setGroupDataFromCsv(data) {
+        // TODO: real CSV reading (handling quotes and what-not)
+        setGroupData(data.split("\n").map((line) => {
+          if (line[0] === '\feff' || line[0] === '\ffef') { line = line.substring(1) }
+          return line.trim().split(",").map((x) => x.trim());
+        }));
+      }
+
+      /**
+       * Make groups from a list-of-list-of-strings of data.
+       * The data should be in one of the following:
+       *   last-name,first-name,email    (designed for gkeep)
+       *   group-name,email1,email2,...  (duplicate group-names are combined)
+       * Returns a map of name:list-of-emails.
+       */
+      function makeGroups(data) {
+        // If the first entry is a header row (i.e. no emails), skip it
+        if (data[0].length < 2 || data[0].every((x) => !x.includes('@'))) { data = data.slice(1); }
+        data = data.filter((row) => row.length > 0);  // remove empty rows
+        if (data.length === 0) { return new Map(); }  // empty file
+
+        // Check if every row has 3 values: last, first, and email
+        if (data.every((row) => row.length === 3 && !row[0].includes('@') && !row[1].includes('@') && row[2].includes('@'))) {
+          return _makeGroups(data, (row) => [row[1] + ' ' + row[0], [row[2]]]);
+        }
+
+        // Remove all single-value rows (just a group name)
+        data = data.filter((row) => row.length > 1);
+
+        // TODO: more error checking?
+        
+        return _makeGroups(data, (row) => [row[0], row.slice(1).filter((x) => x.includes('@'))]);
+      }
+
+      /** Make the 'groups' from data and a function that processes each row into a group name and list of emails. */
+      function _makeGroups(data, process) {
+        const groups = new Map();
+        for (const row of data) {
+          const [name, emails] = process(row);
+          groups.set(name, groups.has(name) ? groups.get(name).concat(emails): emails);
+        }
+        return groups;
+      }
+
+      /** Set the 'groups' data from a list-of-list-strings. */
+      function setGroupData(data) {
+        const group_count = document.getElementById('group-count')
+        const group_data = makeGroups(data);
+        groupsElem.data = group_data;
+        const size = `${group_data.size} groups`;
+        if (group_count) {
+          group_count.innerText = size;
+        } else {
+          groupsElem.innerHTML += ` - <span id="group-count">${size}</span>`;
+        }
+        groupsElem.classList.remove("error");
+      }
+
+      /** Select the source Google Drive file */
+      function selectSource() {
+        openPicker(setSource, new google.picker.DocsView()
+          .setIncludeFolders(true)
+          .setMode(google.picker.DocsViewMode.LIST)
+          // TODO: set parent directory if the parent is not the root?
+          // .setParent(destElem.value.id)
+        );
+      }
+
+      function setSource(file) {
+        setDocFileLink(fileElem, file);
+        if (!haveChangedDest) { getParent(file.id).then((parent) => setDocFileLink(destElem, parent)); }
+        if (!haveChangedName) { nameElem.value = `${file.name} - {}`; }
+      }
+
+      /** Select the destination Google Drive directory */
+      function selectDest() {
+        openPicker(setDest, new google.picker.DocsView()
+          .setMimeTypes('application/vnd.google-apps.folder')
+          .setIncludeFolders(true)
+          .setSelectFolderEnabled(true)
+          .setMode(google.picker.DocsViewMode.LIST)
+          // TODO: set parent directory if the parent is not the root?
+          // .setParent(destElem.value.id)
+        );
+      }
+
+      /** Set the destination Google Drive directory */
+      function setDest(dir) { setDocFileLink(destElem, dir); haveChangedDest = true; }
+      let haveChangedDest = false;
+
+      /** Toggle if the custom message is visible based on the notify checkbox */
+      function toggleNotify() {
+        document.getElementById('customMessage').style.visibility = notifyElem.checked ? 'visible' : 'hidden';
+      }
+
+      /** Check the name field when it changes */
+      function checkName() {
+        if (nameElem.value.includes('{}')) { nameElem.classList.remove("error"); }
+        else { nameElem.classList.add("error"); }
+        haveChangedName = true;
+      }
+      let haveChangedName = false;
+
+      async function dupAndShare() {
+        const ok = document.getElementById('ok');
+        ok.disabled = true;
+        clearOutput();
+        if (groupsElem.classList.contains('error') || nameElem.classList.contains('error')) {
+          showError('Correct the errors above before continuing.');
+          ok.disabled = false;
+          return;
+        }
+
+        // Get the inputs
+        const file_id = fileElem.value.id;
+        const mime_type = fileElem.value.mimeType;
+        const groups = groupsElem.data;
+        const dest_id = destElem.value.id;
+        const name_template = nameElem.value;
+        const send_email = notifyElem.value;
+        const email_msg = emailElem.value;
+
+        // Get a proper name template
+        if (!name_template.includes('{}')) { name_template += ' - {}' }
+
+        // Permission template
+        const permissions = {type: 'user', role: 'writer', sendNotificationEmail: send_email};
+        if (send_email && email_msg) { permissions['emailMessage'] = email_msg; }
+
+        // Go through each group
+        for (const [group, emails] of groups.entries()) {
+          const file_name = name_template.replace("{}", group);
+
+          // Make sure file doesn't already exist (i.e. group hasn't already been processed)
+          if (await fileExists(file_name, dest_id, mime_type)) {
+            showWarn(`Skipped ${group}, document '${file_name}' already exists in the destination`);
+          } else {
+            showOutput(`Creating '${escapeHTML(file_name)}' for ${escapeHTML(emails.join(', '))}`);
+
+            // Copy the file for the group
+            const doc_copy_id = await copyFile(file_id, file_name, dest_id);
+
+            // Share the file with the students in the group
+            for (const email of emails) { shareFile(doc_copy_id, file_name, permissions, email); }
+          }
+        }
+
+        // Show the final results
+        showOutput('Done!');
+        document.getElementById('form').style.display = 'none';
+        let close = document.createElement("input");
+        close.type = "button";
+        close.value = "Close";
+        close.onclick = google.script.host.close;
+        output.after(close);
+      }
+
+      async function fileExists(file_name, dest_id, mime_type) {
+        let condition = `name='${escapeStr(name)}' and '${dest_id}' in parents and trashed=false`;
+        if (mime_type) { condition += ` and mimeType='${mime_type}'`; }
+        const resp = await gapi.client.drive.files.list({
+          q: condition, fields: 'files(id)', includeItemsFromAllDrives: true, supportsAllDrives: true
+        });
+        return resp.result.files.length > 0;
+      }
+
+      async function copyFile(file_id, file_name, dest_id) {
+        const resp = await gapi.client.drive.files.copy({
+          fileId: file_id, fields: 'id', supportsAllDrives: true, resource: {name: file_name, parents: [dest_id]}
+        });
+        // TODO: error handling
+        // showError(`Failed to copy ${escapeHTML(file_name)}: ${escapeHTML(resp.result.error.message)}`);
+        return resp.result.id;
+      }
+
+      async function shareFile(id, file_name, permissions, email) {
+        permissions['emailAddress'] = email;
+        const resp = await gapi.client.drive.permissions.create({fileId: id, resource: permissions})
+        // TODO: error handling
+        // showError(`Failed to share ${escapeHTML(file_name)} with ${escapeHTML(email)}: ${escapeHTML(resp.result.error.message)}`);
+      }
+
+      async function getParent(id) { return await getFile(await getParentId(id)); }
+
+      async function getParentId(id) {
+        while (!driveApiLoaded) { await sleep(0); }
+        const resp = await gapi.client.drive.files.get({
+          fileId: id, fields: 'parents', includeItemsFromAllDrives: true, supportsAllDrives: true
+        });
+        return resp.result.parents[0];
+      }
+
+      async function getFile(id) {
+        while (!driveApiLoaded) { await sleep(0); }
+        const resp = await gapi.client.drive.files.get({
+          fileId: id, fields: 'id,name,mimeType,iconLink,webViewLink', includeItemsFromAllDrives: true, supportsAllDrives: true
+        });
+        return {
+          id: id,
+          name: resp.result.name,
+          mime: resp.result.mimeType,
+          url: resp.result.webViewLink,
+          iconUrl: resp.result.iconLink,
+        };
+      }
+
+      function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+    </script>
+  </head>
+  <body>
+    <h1>Dup-And-Share</h1>
+    <p>
+      Duplicate a Google Doc many times and share each duplicate with groups. Click on the source
+      to select a Google Doc, Google Sheet, or any other file in Google Drive.</p>
+    <p>
+      Then click groups to select a Google Sheet (and you can select the sheet with a multi-sheet
+      file) or CSV file that contains the groups of members. The groups file can also be a CSV
+      dragged and dropped into the groups cell. The groups file should contain the group name in
+      the first column and the email addresses of the members in the subsequent columns. Duplicate
+      groups are combined.
+    </p>
+    <p>
+      All other fields are optional. The destination is the Google Drive folder where the duplicates
+      will be created and defaults to the parent folder of the source file. The name is the
+      template for the duplicated files and defaults to the source file name with " - {}" appended
+      where "{}" is replaced with the group name. The notify checkbox controls if an email is sent
+      to the members of the group when the file is shared with them. If checked, an optional message
+      can be provided in the text area below the checkbox.
+    </p>
+    <p>
+      Created at <a href="https://www.moravian.edu/computer-science">Moravian University</a> by
+      Jeffrey Bush. Source code is available at <a href="https://github.com/MoravianUniversity/dup-and-share">GitHub</a>.
+      You can leave issue reports or feature requests there.
+    </p>
+    <form id="form">
+    <table>
+    <tr onclick="selectSource();"><td>Source:</td><td id="file" class="error">Click to choose a file from Google Drive</td></tr>
+    <tr onclick="selectGroups();"><td>Groups:</td><td id="groups" class="error" ondrop="setGroupDataFromDrop(event);" ondragover="dragOver(event);" ondragenter="dragEnter(event)" ondragleave="dragLeave(event)">Click to set or drag a CSV file here</td></tr>
+    <tr onclick="selectDest();"><td>Destination:</td><td id="dest" class="error"></td></tr>
+    <tr><td><label for="name">Name:</label></td><td><input id="name" size="45" oninput="checkName()"> &nbsp; (use {} for group name)</td></tr>
+    <tr><td><label for="notify">Notify:</label></td><td><input id="notify" type="checkbox" checked onchange="toggleNotify();"></td></tr>
+    <tr id="customMessage"><td><label for="email">Optional Message:</label></td><td><textarea id="email"></textarea></td></tr>
+    </table>
+    <div style="text-align: center;"><input type="button" value="Dup-And-Share!" onclick="dupAndShare();" id="ok"></div>
+    </form>
+    <div id="output"></div>
+    <script src="https://accounts.google.com/gsi/client" async defer onload="onGISClientLoad()"></script>
+    <script src="https://apis.google.com/js/platform.js" async defer onload="onApiLoad()"></script>
+  </body>
+</html>
