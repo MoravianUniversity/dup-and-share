@@ -62,15 +62,14 @@
             else {
               oauthToken = response.access_token;
               oauthExpires = Date.now() + (response.expires_in - 10) * 1000;
+              localStorage.setItem("oauthToken", oauthToken);
+              localStorage.setItem("oauthExpires", oauthExpires);
               if (postLoginAction) {
                 let action = postLoginAction;
                 postLoginAction = null;
                 action();
               }
-              gapi.client.oauth2.userinfo.get().then((resp) => {
-                document.getElementById('google-button').innerHTML = 
-                  `<img src="${resp.result.picture}"> ${escapeHTML(resp.result.name)} (${escapeHTML(resp.result.email)})`;
-              });
+              setButtonText();
             }
           },
           error_callback: (error) => {
@@ -78,6 +77,13 @@
           }
         });
         document.getElementById("google-button").addEventListener("click", (ev) => { ensureLoggedIn(); });
+      }
+
+      function setButtonText() {
+        gapi.client.oauth2.userinfo.get().then((resp) => {
+          document.getElementById('google-button').innerHTML = 
+            `<img src="${resp.result.picture}"> ${escapeHTML(resp.result.name)} (${escapeHTML(resp.result.email)})`;
+        });
       }
 
       function ensureLoggedIn() {
@@ -112,7 +118,7 @@
 
       /* On loading, get references to most cells and set the initial Google Doc source */
       let fileElem, groupsElem, destElem, nameElem, notifyElem, emailElem, outputElem;
-      window.addEventListener('load', () => {
+      window.addEventListener('load', async () => {
         fileElem = document.getElementById('file');
         groupsElem = document.getElementById('groups');
         destElem = document.getElementById('dest');
@@ -120,6 +126,25 @@
         notifyElem = document.getElementById('notify');
         emailElem = document.getElementById('email');
         output = document.getElementById('output');
+
+        if (localStorage.getItem("oauthToken")) {
+          oauthToken = localStorage.getItem("oauthToken");
+          oauthExpires = parseInt(localStorage.getItem("oauthExpires"));
+          if (oauthExpires > Date.now()) {
+            while (!gapi.client || !gapi.client.oauth2) { await sleep(0); }
+            gapi.client.setToken({
+              access_token: oauthToken,
+              expires_in: (oauthExpires - Date.now()) / 1000, 
+              scope: SCOPES.join(" "),
+              token_type: 'Bearer',
+              prompt: '',
+            });
+            setButtonText();
+          } else {
+            oauthToken = null;
+            oauthExpires = null;
+          }
+        }
       });
 
       /** Set a cell to show a doc that isn't a Google Doc */
