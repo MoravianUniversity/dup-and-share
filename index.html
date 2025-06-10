@@ -45,26 +45,44 @@
     }
 
       function onGISClientLoad() {
-        client = google.accounts.oauth2.initTokenClient({
+        // client = google.accounts.oauth2.initTokenClient({
+        //   client_id: CLIENT_ID,
+        //   scope: SCOPES.join(" "),
+        //   prompt: '',
+        //   callback: async (response) => {
+        //     if (response.error !== undefined) { showError(response); }
+        //     else {
+        //       OAUTH_TOKEN = response.access_token;
+        //       if (postLoginAction) {
+        //         let action = postLoginAction;
+        //         postLoginAction = null;
+        //         action();
+        //       }
+        //     }
+        //   },
+        //   error_callback: (error) => {
+        //     showError("Login failed: " + error);
+        //   }
+        // });
+        google.accounts.id.initialize({
           client_id: CLIENT_ID,
-          scope: SCOPES.join(" "),
-          prompt: '',
-          callback: async (response) => {
-            if (response.error !== undefined) { showError(response); }
-            else {
-              OAUTH_TOKEN = response.access_token;
+          callback: (response) => {
+            if (response.credential) {
+              OAUTH_TOKEN = response.credential;
               if (postLoginAction) {
                 let action = postLoginAction;
                 postLoginAction = null;
                 action();
               }
+            } else {
+              showError("Login failed");
             }
-          },
-          error_callback: (error) => {
-            showError("Login failed: " + error);
           }
         });
-        client.requestAccessToken();
+        google.accounts.id.renderButton(
+          document.getElementById('google-button'),
+          { theme: 'outline', size: 'large', text: 'sign_in_with', shape: 'rectangular', logo_alignment: 'left' }
+        );
       }
 
       function clearOutput() { output.innerText = ''; }
@@ -111,12 +129,12 @@
       function openPicker(callback, view) {
         clearOutput();
         if (!pickerApiLoaded) { showError("Unable to load the file picker API."); return; }
-        if (client === null || OAUTH_TOKEN === null) {
-            showError("You must be logged in to use the file picker.");
-            client.requestAccessToken();
-            postLoginAction = () => { openPicker(callback, view); };
-            return;
-        }
+        // if (client === null || OAUTH_TOKEN === null) {
+        //     showError("You must be logged in to use the file picker.");
+        //     client.requestAccessToken();
+        //     postLoginAction = () => { openPicker(callback, view); };
+        //     return;
+        // }
         const picker = new google.picker.PickerBuilder()
           .addView(view)
           .hideTitleBar()
@@ -425,11 +443,11 @@
   </head>
   <body>
     <h1>Dup-And-Share</h1>
+    <p>Duplicate a Google Doc many times and share each duplicate with groups.</p>
+    <p>First, log in with your Google account using the button below.</p>
+    <p>Then, click on the source to select a Google Doc or any other file in Google Drive.</p>
     <p>
-      Duplicate a Google Doc many times and share each duplicate with groups. Click on the source
-      to select a Google Doc, Google Sheet, or any other file in Google Drive.</p>
-    <p>
-      Then click groups to select a Google Sheet (and you can select the sheet with a multi-sheet
+      Finally, click groups to select a Google Sheet (and you can select the sheet with a multi-sheet
       file) or CSV file that contains the groups of members. The groups file can also be a CSV
       dragged and dropped into the groups cell. The groups file should contain the group name in
       the first column and the email addresses of the members in the subsequent columns. Duplicate
@@ -449,6 +467,7 @@
       You can leave issue reports or feature requests there.
     </p>
     <form id="form">
+    <div id="google-button"></div>
     <table>
     <tr onclick="selectSource();"><td>Source:</td><td id="file" class="error">Click to choose a file from Google Drive</td></tr>
     <tr onclick="selectGroups();"><td>Groups:</td><td id="groups" class="error" ondrop="setGroupDataFromDrop(event);" ondragover="dragOver(event);" ondragenter="dragEnter(event)" ondragleave="dragLeave(event)">Click to set or drag a CSV file here</td></tr>
