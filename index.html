@@ -7,20 +7,24 @@
       body { color: #222; font: 13px/18px arial, sans-serif; }
       body > * { max-width: 700px; width: 100%; margin: 0 auto; }
       body > p { margin-bottom: 10px; }
+      body > div.picker { max-width: none; }
       h1 { text-align: center; margin-bottom: 10px; font-size: 1.5em; }
-      table { border-spacing: 0; margin: 10px 0 20px; }
-      td { border-bottom: 1px solid #ebebeb; padding: 11px 0; }
-      td:first-child { text-align: right; width: auto; padding-right: 3px; }
-      td:last-child { width: 100%; vertical-align: middle; }
+      table { border-collapse: collapse; margin: 10px 0 20px; }
+      tr { border-bottom: 1px solid #ebebeb; }
+      td { padding: 11px 0; }
+      td:first-child { text-align: right; width: auto; padding-right: 4px; }
+      td:last-child { width: 100%; vertical-align: middle; padding-left: 4px; }
       tr:last-child td:first-child { vertical-align: top; }
       *[onclick] { cursor: pointer; }
-      .error { background-color: red; color: black; }
+      .error { color: black; background-color: red; }
       p.error { color: red; background-color: inherit; }
       p.warn { color: orange; background-color: inherit; }
       #ok[disabled] { cursor: wait; }
-      #groups { border: 2px dashed transparent; border-radius: 5px; padding-top: 9px; padding-bottom: 9px; }
-      #groups.drag-over { border-color: blue; }
-      textarea { resize: vertical; width: 98% }
+      #groups { outline: 2px dashed transparent; }
+      #groups.drag-over { outline-color: blue; }
+      textarea { resize: vertical; width: 98%; }
+      button { margin: 0 auto; display: block; padding: 10px 10px; background-color: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; cursor: pointer; }
+      button img { vertical-align: middle; padding-right: 2px; width: 24px; height: 24px; }
       #output { margin: 5px auto; padding: 5px; }
     </style>
     <script>
@@ -28,61 +32,60 @@
       const CLIENT_ID = "684562415835-2fd94i9sooo40nk2tpesi8vnatq4ui9r.apps.googleusercontent.com";
       const CLOUD_PROJECT_NUMBER = "quickstart-1572222806139";
       const SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets.readonly"];
-      let OAUTH_TOKEN = null;
 
       let pickerApiLoaded = false;
       let driveApiLoaded = false;
       let sheetsApiLoaded = false;
+      let oauthToken = null;
+      let oauthExpires = null;
       let client = null;
       let postLoginAction = null;
 
       function onApiLoad() {
         gapi.load("picker", {callback: () => { pickerApiLoaded = true; }});
-        gapi.load('client:auth2', function() {
+        gapi.load('client', function() {
+            gapi.client.load('oauth2', 'v1');
             gapi.client.load('drive', 'v3').then(() => { driveApiLoaded = true; });
             gapi.client.load('sheets', 'v4').then(() => { sheetsApiLoaded = true; });
         });
-    }
+      }
 
       function onGISClientLoad() {
-        // client = google.accounts.oauth2.initTokenClient({
-        //   client_id: CLIENT_ID,
-        //   scope: SCOPES.join(" "),
-        //   prompt: '',
-        //   callback: async (response) => {
-        //     if (response.error !== undefined) { showError(response); }
-        //     else {
-        //       OAUTH_TOKEN = response.access_token;
-        //       if (postLoginAction) {
-        //         let action = postLoginAction;
-        //         postLoginAction = null;
-        //         action();
-        //       }
-        //     }
-        //   },
-        //   error_callback: (error) => {
-        //     showError("Login failed: " + error);
-        //   }
-        // });
-        google.accounts.id.initialize({
+        client = google.accounts.oauth2.initTokenClient({
           client_id: CLIENT_ID,
+          scope: SCOPES.join(" "),
+          ux_mode: 'popup',
+          prompt: '',
           callback: (response) => {
-            if (response.credential) {
-              OAUTH_TOKEN = response.credential;
+            console.log("response", response);
+            if (response.error) { showError(response); }
+            else {
+              oauthToken = response.access_token;
+              oauthExpires = Date.now() + (response.expires_in - 10) * 1000;
               if (postLoginAction) {
                 let action = postLoginAction;
                 postLoginAction = null;
                 action();
               }
-            } else {
-              showError("Login failed");
+              gapi.client.oauth2.userinfo.get().then((resp) => {
+                document.getElementById('google-button').innerHTML = 
+                  `<img src="${resp.result.picture}"> ${escapeHTML(resp.result.name)} (${escapeHTML(resp.result.email)})`;
+              });
             }
+          },
+          error_callback: (error) => {
+            showError("Login failed: " + error);
           }
         });
-        google.accounts.id.renderButton(
-          document.getElementById('google-button'),
-          { theme: 'outline', size: 'large', text: 'sign_in_with', shape: 'rectangular', logo_alignment: 'left' }
-        );
+        document.getElementById("google-button").addEventListener("click", (ev) => { ensureLoggedIn(); });
+      }
+
+      function ensureLoggedIn() {
+        if (oauthToken === null || oauthExpires < Date.now()) {
+          client.requestAccessToken();
+          return false;
+        }
+        return true;
       }
 
       function clearOutput() { output.innerText = ''; }
@@ -129,17 +132,16 @@
       function openPicker(callback, view) {
         clearOutput();
         if (!pickerApiLoaded) { showError("Unable to load the file picker API."); return; }
-        // if (client === null || OAUTH_TOKEN === null) {
-        //     showError("You must be logged in to use the file picker.");
-        //     client.requestAccessToken();
-        //     postLoginAction = () => { openPicker(callback, view); };
-        //     return;
-        // }
+        if (!ensureLoggedIn()) {
+            showError("You must be logged in to use the file picker.");
+            postLoginAction = () => { openPicker(callback, view); };
+            return;
+        }
         const picker = new google.picker.PickerBuilder()
           .addView(view)
           .hideTitleBar()
           .setSize(650, 600)
-          .setOAuthToken(OAUTH_TOKEN)
+          .setOAuthToken(oauthToken)
           .setDeveloperKey(API_KEY)
           .setAppId(CLOUD_PROJECT_NUMBER)
           .setCallback((data) => {
@@ -467,7 +469,7 @@
       You can leave issue reports or feature requests there.
     </p>
     <form id="form">
-    <div id="google-button"></div>
+    <button id="google-button"><img src="//ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png"> Authorize Google Drive</button>
     <table>
     <tr onclick="selectSource();"><td>Source:</td><td id="file" class="error">Click to choose a file from Google Drive</td></tr>
     <tr onclick="selectGroups();"><td>Groups:</td><td id="groups" class="error" ondrop="setGroupDataFromDrop(event);" ondragover="dragOver(event);" ondragenter="dragEnter(event)" ondragleave="dragLeave(event)">Click to set or drag a CSV file here</td></tr>
@@ -476,7 +478,7 @@
     <tr><td><label for="notify">Notify:</label></td><td><input id="notify" type="checkbox" checked onchange="toggleNotify();"></td></tr>
     <tr id="customMessage"><td><label for="email">Optional Message:</label></td><td><textarea id="email"></textarea></td></tr>
     </table>
-    <div style="text-align: center;"><input type="button" value="Dup-And-Share!" onclick="dupAndShare();" id="ok"></div>
+    <button type="button" onclick="dupAndShare();" id="ok">Dup-And-Share!</button>
     </form>
     <div id="output"></div>
     <script src="https://accounts.google.com/gsi/client" async defer onload="onGISClientLoad()"></script>
