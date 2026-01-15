@@ -398,7 +398,7 @@
             showOutput(`Creating '${escapeHTML(file_name)}' for ${escapeHTML(emails.join(', '))}`);
 
             // Copy the file for the group
-            //const doc_copy_id = await copyFile(file_id, file_name, dest_id);
+            const doc_copy_id = await copyFile(file_id, file_name, dest_id);
 
             // Share the file with the students in the group
             // TODO: there is a bug around here, only the last email is being processed
