@@ -401,9 +401,7 @@
             const doc_copy_id = await copyFile(file_id, file_name, dest_id);
 
             // Share the file with the students in the group
-            // TODO: there is a bug around here, only the last email is being processed
             for (const email of emails) {
-              console.log(email); // TODO: only doing last email? or somehow the shareFile() is overriding itself?
               await shareFile(doc_copy_id, file_name, permissions, email);
             }
           }
@@ -432,18 +430,23 @@
         const resp = await gapi.client.drive.files.copy({
           fileId: file_id, fields: 'id', supportsAllDrives: true, resource: {name: file_name, parents: [dest_id]}
         });
-        // TODO: error handling
-        // showError(`Failed to copy ${escapeHTML(file_name)}: ${escapeHTML(resp.result.error.message)}`);
-        console.log(resp);
-        return resp.result.id;
+        if (resp.status < 200 || resp.status >= 300 || resp.result.error) {
+          console.log(resp);
+          showError(`Failed to copy ${escapeHTML(file_name)}: ${escapeHTML(resp.result.error.message)}`);
+          throw new Error("Copy failed");
+        } else {
+          return resp.result.id;
+        }
       }
 
       async function shareFile(id, file_name, permissions, email) {
         permissions['emailAddress'] = email;
         const resp = await gapi.client.drive.permissions.create({fileId: id, resource: permissions})
-        // TODO: error handling
-        // showError(`Failed to share ${escapeHTML(file_name)} with ${escapeHTML(email)}: ${escapeHTML(resp.result.error.message)}`);
-        console.log(resp);
+        if (resp.status < 200 || resp.status >= 300 || resp.result.error) {
+          console.log(resp);
+          showError(`Failed to share ${escapeHTML(file_name)} with ${escapeHTML(email)}: ${escapeHTML(resp.result.error.message)}`);
+          throw new Error("Share failed");
+        }
       }
 
       async function getParent(id) { return await getFile(await getParentId(id)); }
