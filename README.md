@@ -10,4 +10,4 @@ TODO
 - [ ] How do shortcuts work in this? (how do I want them to work?)
 - [ ] How to create new folders? (use upload view instead?)
 - [ ] Copy-Paste Group File (reuse click-and-drag code mostly)
-- [ ] Does not support stripping answers although it was supported in the orignal Python version.
+- [ ] Does not support stripping answers although it was supported in the original Python version.
